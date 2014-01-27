@@ -1,9 +1,9 @@
 all: example
 
-compile:
+handrail:
 	@echo "#!/usr/bin/env casperjs" > handrail
 	@coffee -p handrail.coffee >> handrail
 	@chmod +x handrail
 
-example:
-	handrail example.md
+example: handrail
+	./handrail example.md

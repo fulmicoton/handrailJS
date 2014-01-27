@@ -5,7 +5,7 @@ fs = require 'fs'
 cs = require('./vendor/coffee-script.js').CoffeeScript
 
 CASPER_CONFIG = 
-    clientScripts:  [ 'vendor/jquery-1.11.0.min.js' ]
+    #clientScripts:  [ 'vendor/jquery-1.11.0.min.js' ]
     logLevel: "info"
     verbose: true    
 casper = require('casper').create CASPER_CONFIG
@@ -15,6 +15,18 @@ split_data = (data)->
     header = data[...limit]
     body = data[limit+3...]
     [ header, body ]
+
+casper.on 'http.status', (resource)->
+    console.log 'status ON ' + resource, resource.url
+
+casper.on 'http.status.400', (resource)->
+    console.log '400 ON ' + resource.url
+
+casper.on 'http.status.404', (resource)->
+    console.log '404 ON ' + resource.url
+
+casper.on 'remote.message', (resource)->
+    console.log 'REMOTE LOG ' + resource
 
 
 
@@ -36,7 +48,16 @@ class CheckOperation extends Operation
             casper.die()
 
 
+class WaitOperation extends Operation
 
+    constructor: (@name, @options)->
+
+    run: (casper)->
+        condition = @options.condition
+        if condition?
+            casper.waitFor -> casper.evaluate condition, (-> console.log "WAITED"), (-> console.log "TIMEOOUT"), @options.timeout
+        else
+            casper.wait @options.timeout
 
 class ActionOperation extends Operation
     
@@ -75,6 +96,7 @@ OPERATION_MAP =
     action: ActionOperation
     screenshot: ScreenshotOperation
     debug: DebugOperation
+    wait: WaitOperation
 
 operation_from_label = (opname)->
     for opprefix,opclass of OPERATION_MAP
@@ -90,6 +112,7 @@ class Step
     operations: ->
         operations = []
         for k,v of @code
+            console.log k
             operation = new (operation_from_label k)(k,v)
             operations.push operation
         operations
@@ -119,6 +142,7 @@ class Tutorial
             for step_id, step of @steps
                 do (step) ->
                     casper.then ->
+                        console.log step.name
                         writer.append step.text
                 for op_id, operation of step.operations()
                     do (step_id, op_id, operation) ->
@@ -141,6 +165,7 @@ class Tutorial
 
 if casper.cli.args.length != 1
     console.log "Expecting step markdown file as argument."
+    casper.exit();
 else
     filepath = casper.cli.args[0]
     Tutorial.from_file(filepath).start()
