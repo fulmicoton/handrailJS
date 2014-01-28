@@ -32,12 +32,15 @@ casper.on 'remote.message', (resource)->
 
 class Operation
 
-    constructor: (@name, @code)->
+    constructor: (@name, @options)->
 
     run: (casper)->
         throw "Not implemented"
 
-
+    setup: (casper, writer)->
+        casper.then =>
+            console.log " -", @name
+            @run casper, writer
 
 class CheckOperation extends Operation
 
@@ -47,37 +50,75 @@ class CheckOperation extends Operation
             console.error @name, ": failed, dying."
             casper.die()
 
-
 class WaitOperation extends Operation
-
-    constructor: (@name, @options)->
 
     run: (casper)->
         condition = @options.condition
+        timeout = @options.timeout ? 5000
+        args = @options.args
         if condition?
-            casper.waitFor -> casper.evaluate condition, (-> console.log "WAITED"), (-> console.log "TIMEOOUT"), @options.timeout
+            casper.waitFor (-> casper.evaluate condition, args...), (-> console.log "WAITED"), (-> console.log "TIMEOOUT"), timeout
         else
-            casper.wait @options.timeout
+            casper.wait timeout
 
 class ActionOperation extends Operation
     
     run: (casper)->
-        @code.apply casper
+        @options.apply casper
 
+
+class ClickOperation extends Operation
+
+    constructor: (@name, @options)->
+        @subops = []
+        timeout = @options.timeout ? 5000
+        if @options.selector
+            @subops.push new WaitOperation @name + "_wait",
+                condition: (selector) -> $(selector).length >= 1
+                args: [ @options.selector ]
+                timeout: timeout
+            selector = @options.selector
+            @subops.push new ActionOperation @name+"_action", ->
+                @click selector
+        else if @options.label?
+            tag = @options.tag
+            label = @options.label
+            args = [ label ]
+            if tag?
+                args.push tag
+            @subops.push new WaitOperation @name + "_wait",
+                condition: (label, tag)-> 
+                    selector = (tag ? "*") ":contains(#{label})"
+                    console.log "SELECTOR", JSON.stringify selector
+                    $(selector).length >= 1
+                "args": args
+            @subops.push new ActionOperation @name+"_action", ->
+                if tag?
+                    @clickLabel label, tag
+                else
+                    @clickLabel label
+
+        else
+            throw "Cannot build click operation with " + JSON.stringify @options
+
+    setup: (casper, writer)->
+        for op in @subops
+            do (op)->
+                casper.then ->
+                    console.log " -", op.name
+                    op.run casper, writer
 
 
 class DebugOperation extends Operation
     
     run: (casper)->
-        console.log "DEBUG ", casper.evaluate @code
-
-
+        console.log "DEBUG(#{@name}) :", casper.evaluate @options
 
 class ScreenshotOperation extends Operation
-
-    constructor: (@name, @options)->
     
     run: (casper, writer)->
+        if not @options.filepath?
+            @options.filepath = @name + ".png"
         if not @options.box? and @options.selector
             selector = @options.selector
             get_box = (selector)->
@@ -90,32 +131,20 @@ class ScreenshotOperation extends Operation
         casper.capture @options.filepath, @box
         writer.append "<img src='#{@options.filepath}'>"
 
-
-OPERATION_MAP =
-    check: CheckOperation
-    action: ActionOperation
-    screenshot: ScreenshotOperation
-    debug: DebugOperation
-    wait: WaitOperation
-
 operation_from_label = (opname)->
     for opprefix,opclass of OPERATION_MAP
         if opname.indexOf(opprefix) == 0
             return opclass
     undefined
 
-
 class Step
 
-    constructor: (@text, @code)->
+    constructor: (@text)-> 
+        @operations = []
 
-    operations: ->
-        operations = []
-        for k,v of @code
-            console.log k
-            operation = new (operation_from_label k)(k,v)
-            operations.push operation
-        operations
+    add_operation: (operation)->
+        console.log "Adding operation", operation.name
+        @operations.push operation
 
 class Writer
 
@@ -142,12 +171,10 @@ class Tutorial
             for step_id, step of @steps
                 do (step) ->
                     casper.then ->
-                        console.log step.name
+                        casper.log "Step " + step_id, 'info'
                         writer.append step.text
-                for op_id, operation of step.operations()
-                    do (step_id, op_id, operation) ->
-                        casper.then ->
-                            operation.run this, writer
+                for operation in step.operations
+                    operation.setup casper, writer
             casper.then ->
                 writer.write()
         casper.run()
@@ -159,11 +186,30 @@ class Tutorial
         config = cs.eval header
         steps = []
         # just a dummy name to make docco thinks its a litterate coffeescript file.
+        new_step = null
+        step_id = 1
+        operation_appender = (name, optype)->
+            global[name] = (params) ->
+                op_name = params.name
+                if not op_name? or op_name.length==0
+                    op_name = name + "_" + step_id + "_" + (new_step.operations.length + 1)
+                new_step.add_operation (new optype op_name, params)
+            step_id += 1
+        operation_appender "check", CheckOperation
+        operation_appender "action", ActionOperation
+        operation_appender "screenshot", ScreenshotOperation
+        operation_appender "debug", DebugOperation
+        operation_appender "wait", WaitOperation
+        operation_appender "click", ClickOperation
         for stepData in brocco.parse "dummy.litcoffee", body
-            steps.push new Step stepData.docsText, cs.eval(stepData.codeText)
+            new_step = new Step stepData.docsText
+            if stepData.codeText?
+                cs.eval stepData.codeText
+            steps.push new_step
         new Tutorial config, steps
 
 if casper.cli.args.length != 1
+
     console.log "Expecting step markdown file as argument."
     casper.exit();
 else
