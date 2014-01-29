@@ -1,8 +1,8 @@
 #!/usr/bin/env casperjs
 
-brocco = require './vendor/brocco'
+brocco = require '/home/pmasurel/git/handrailJS/vendor/brocco'
 fs = require 'fs'
-cs = require('./vendor/coffee-script.js').CoffeeScript
+cs = require('/home/pmasurel/git/handrailJS/vendor/coffee-script.js').CoffeeScript
 
 CASPER_CONFIG = 
     #clientScripts:  [ 'vendor/jquery-1.11.0.min.js' ]
@@ -16,19 +16,14 @@ split_data = (data)->
     body = data[limit+3...]
     [ header, body ]
 
-casper.on 'http.status', (resource)->
-    console.log 'status ON ' + resource, resource.url
-
 casper.on 'http.status.400', (resource)->
-    console.log '400 ON ' + resource.url
+    casper.log '400 ON ' + resource.url, 'error'
 
 casper.on 'http.status.404', (resource)->
-    console.log '404 ON ' + resource.url
+    casper.log '404 ON ' + resource.url, 'error'
 
-casper.on 'remote.message', (resource)->
-    console.log 'REMOTE LOG ' + resource
-
-
+casper.on 'remote.message', (msg)->
+    casper.log '[ console ]' +  msg, 'info'
 
 class Operation
 
@@ -39,7 +34,6 @@ class Operation
 
     setup: (casper, writer)->
         casper.then =>
-            console.log " -", @name
             @run casper, writer
 
 class CheckOperation extends Operation
@@ -52,12 +46,28 @@ class CheckOperation extends Operation
 
 class WaitOperation extends Operation
 
-    run: (casper)->
+    success: ->
+        casper.log 'WAITED ' + @name, 'info'
+
+    failure: ->
+        casper.log 'TIMEOUT ' + @name, 'error'
+        [condition, args] = @condition_and_args()
+
+    condition_and_args: ->
         condition = @options.condition
+        args = @options.args 
+        if not condition? and @options.selector
+            condition = (selector)-> $(selector).length >= 1
+            args = [ @options.selector ]
+        if not args?
+            args = []
+        [condition, args]
+
+    run: (casper)->
         timeout = @options.timeout ? 5000
-        args = @options.args
+        [condition, args] = @condition_and_args()
         if condition?
-            casper.waitFor (-> casper.evaluate condition, args...), (-> console.log "WAITED"), (-> console.log "TIMEOOUT"), timeout
+            casper.waitFor (-> casper.evaluate(condition, args...)), (=> @success()), (=> @failure()), timeout
         else
             casper.wait timeout
 
@@ -83,15 +93,9 @@ class ClickOperation extends Operation
         else if @options.label?
             tag = @options.tag
             label = @options.label
-            args = [ label ]
-            if tag?
-                args.push tag
+            selector = (tag ? "*") + ":contains(#{label})"
             @subops.push new WaitOperation @name + "_wait",
-                condition: (label, tag)-> 
-                    selector = (tag ? "*") ":contains(#{label})"
-                    console.log "SELECTOR", JSON.stringify selector
-                    $(selector).length >= 1
-                "args": args
+                selector: selector
             @subops.push new ActionOperation @name+"_action", ->
                 if tag?
                     @clickLabel label, tag
@@ -105,14 +109,14 @@ class ClickOperation extends Operation
         for op in @subops
             do (op)->
                 casper.then ->
-                    console.log " -", op.name
+                    casper.log "  OPERATION : " + op.name, 'info'
                     op.run casper, writer
 
 
 class DebugOperation extends Operation
     
     run: (casper)->
-        console.log "DEBUG(#{@name}) :", casper.evaluate @options
+        console.log "DEBUG(#{@name}) :" + casper.evaluate @options
 
 class ScreenshotOperation extends Operation
     
@@ -143,7 +147,7 @@ class Step
         @operations = []
 
     add_operation: (operation)->
-        console.log "Adding operation", operation.name
+        casper.log "Adding operation : " + operation.name, "info"
         @operations.push operation
 
 class Writer
@@ -169,9 +173,12 @@ class Tutorial
         casper.start @config.url, =>
             casper.viewport @config.width, @config.height
             for step_id, step of @steps
-                do (step) ->
+                do (step, step_id) ->
                     casper.then ->
+                        console.log "------------"
                         casper.log "Step " + step_id, 'info'
+                        console.log "------------"
+                        console.log step.text
                         writer.append step.text
                 for operation in step.operations
                     operation.setup casper, writer
@@ -180,21 +187,19 @@ class Tutorial
         casper.run()
 
     @from_file: (filepath, cb)->
-        # parse file in filepath into a tutorial object.
+        #    file in filepath into a tutorial object.
         data = fs.read filepath 
         [ header, body ] = split_data data
         config = cs.eval header
         steps = []
         # just a dummy name to make docco thinks its a litterate coffeescript file.
         new_step = null
-        step_id = 1
         operation_appender = (name, optype)->
-            global[name] = (params) ->
+            window[name] = (params) ->
                 op_name = params.name
                 if not op_name? or op_name.length==0
-                    op_name = name + "_" + step_id + "_" + (new_step.operations.length + 1)
+                    op_name = name + "_" + (steps.length + 1) + "_" + (new_step.operations.length + 1)
                 new_step.add_operation (new optype op_name, params)
-            step_id += 1
         operation_appender "check", CheckOperation
         operation_appender "action", ActionOperation
         operation_appender "screenshot", ScreenshotOperation
@@ -204,12 +209,12 @@ class Tutorial
         for stepData in brocco.parse "dummy.litcoffee", body
             new_step = new Step stepData.docsText
             if stepData.codeText?
-                cs.eval stepData.codeText
+                f = cs.compile stepData.codeText
+                eval f
             steps.push new_step
         new Tutorial config, steps
 
 if casper.cli.args.length != 1
-
     console.log "Expecting step markdown file as argument."
     casper.exit();
 else

@@ -6,4 +6,4 @@ handrail:
 	@chmod +x handrail
 
 example: handrail
-	./handrail example.md
+	casperjs --engine=slimerjs handrail.coffee index.md 
