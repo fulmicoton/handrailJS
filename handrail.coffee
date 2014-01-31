@@ -25,6 +25,55 @@ casper.on 'http.status.404', (resource)->
 casper.on 'remote.message', (msg)->
     casper.log '[ console ]' +  msg, 'info'
 
+
+class Camera
+
+    constructor: (@output, @suffix)->
+        @margin = 100
+        @min_diameter = 200
+        @viewport_width = 1100 # TODO get rid of harcoded values
+        @viewport_height = 3000
+
+    adjust_frame: (box)-> 
+        x = box.left + box.width / 2.0
+        y = box.top + box.height / 2.0
+        diameter = Math.max(box.width, box.height) + @margin
+        diameter = Math.max(diameter, @min_diameter)
+        diameter = Math.min(diameter, @viewport_width, @viewport_height)
+        left = Math.max(x - diameter/2.0, 0.0)
+        top = Math.max(y - diameter/2.0, 0.0)
+        left = Math.min(left, @viewport_width - diameter)
+        top = Math.min(top, @viewport_height - diameter)
+        left: left
+        top: top
+        width: diameter
+        height: diameter
+
+    shot_filepath: (name)->
+        relpath = @output + "/" + name + @suffix + ".png"
+        filepath = @output + "/" + relpath
+        relpath: relpath
+        filepath: filepath          
+
+
+    get_box = (selector)->
+        $el = $(selector)
+        box = $el.offset()
+        box.width = $el.outerWidth()
+        box.height = $el.outerHeight()
+        box
+
+    shot: (casper, selector, name)->
+        box = casper.evaluate get_box, selector
+        frame = @adjust_frame box
+        img_metas = @shot_filepath name
+        casper.capture img_metas.filepath, frame
+        img_metas.box = box
+        img_metas.frame = frame
+        img_metas
+
+camera = null
+
 class Operation
 
     constructor: (@name, @options)->
@@ -52,6 +101,7 @@ class WaitOperation extends Operation
     failure: ->
         casper.log 'TIMEOUT ' + @name, 'error'
         [condition, args] = @condition_and_args()
+        casper.die()
 
     condition_and_args: ->
         condition = @options.condition
@@ -121,19 +171,9 @@ class DebugOperation extends Operation
 class ScreenshotOperation extends Operation
     
     run: (casper, writer)->
-        if not @options.filepath?
-            @options.filepath = @name + ".png"
-        if not @options.box? and @options.selector
-            selector = @options.selector
-            get_box = (selector)->
-                $el = $(selector)
-                box = $el.offset()
-                box.width = $el.outerWidth()
-                box.height = $el.outerHeight()
-                box
-            @box = casper.evaluate get_box, @options.selector
-        casper.capture @options.filepath, @box
-        writer.append "<img src='#{@options.filepath}'>"
+        selector = @options.selector
+        img = camera.shot casper, selector, @name
+        writer.append "<img class='circle' src='#{ img.relpath }'>"
 
 operation_from_label = (opname)->
     for opprefix,opclass of OPERATION_MAP
@@ -152,7 +192,8 @@ class Step
 
 class Writer
 
-    constructor: (@filepath)->
+    constructor: (@output)->
+        @filepath = @output + "/index.md"
         @data = []
 
     append: (part)->
@@ -169,10 +210,13 @@ class Tutorial
 
     start: ->
         writer = new Writer @config.output
+        camera = new Camera @config.output, "-circle"
         steps_data = []
         casper.start @config.url, =>
             casper.viewport @config.width, @config.height
             for step_id, step of @steps
+                for operation in step.operations
+                    operation.setup casper, writer
                 do (step, step_id) ->
                     casper.then ->
                         console.log "------------"
@@ -180,8 +224,6 @@ class Tutorial
                         console.log "------------"
                         console.log step.text
                         writer.append step.text
-                for operation in step.operations
-                    operation.setup casper, writer
             casper.then ->
                 writer.write()
         casper.run()
