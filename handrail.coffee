@@ -50,7 +50,7 @@ class Camera
         height: diameter
 
     shot_filepath: (name)->
-        relpath = @output + "/" + name + @suffix + ".png"
+        relpath = "img/" + name + @suffix + ".png"
         filepath = @output + "/" + relpath
         relpath: relpath
         filepath: filepath          
@@ -201,7 +201,7 @@ class Writer
 
     write: ->
         if @filepath?
-            fs.write @filepath, @data.join '\n', 'w'
+            fs.write @filepath, @data.join('\n'), 'w'
 
 
 class Tutorial
@@ -215,15 +215,17 @@ class Tutorial
         casper.start @config.url, =>
             casper.viewport @config.width, @config.height
             for step_id, step of @steps
-                for operation in step.operations
-                    operation.setup casper, writer
                 do (step, step_id) ->
                     casper.then ->
                         console.log "------------"
                         casper.log "Step " + step_id, 'info'
                         console.log "------------"
                         console.log step.text
-                        writer.append step.text
+                        writer.append step.text.trim()
+                for operation in step.operations
+                    operation.setup casper, writer
+                casper.then ->
+                    writer.append "\n"
             casper.then ->
                 writer.write()
         casper.run()
