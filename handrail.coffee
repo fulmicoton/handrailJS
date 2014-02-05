@@ -32,8 +32,8 @@ class Camera
     constructor: (@name, @output, @suffix)->
         @margin = 100
         @min_diameter = 200
-        @viewport_width = 1100
-        @viewport_height = 3000
+        @viewport_width = 1200
+        @viewport_height = 1000
 
     adjust_frame: (box)-> 
         throw "NOT IMPLEMENTED"
@@ -64,12 +64,12 @@ class Camera
 class FullCamera extends Camera
 
     adjust_frame: (box)-> 
-        # y = box.top + box.height / 2.0
-        # if y < 600
-        #     y = 0
-        # else
-        #     y = Math.max (y - 500), box.top
-        #     y = Math.min (@viewport_height - 1000), y
+        y = box.top + box.height / 2.0
+        if y < 600
+            y = 0
+        else
+            y = Math.max (y - 500), box.top
+            y = Math.min (@viewport_height - 1000), y
         left: 0
         top: 0
         width: @viewport_width
@@ -202,12 +202,9 @@ class ScreenshotOperation extends Operation
     
     run: (casper, step_output)->
         selector = @options.selector
-        #writer.append "<img class='circle' src='#{ img.relpath }'>"
         shots = {}
         screenshot = { "name": @name, "shots": shots }
         for camera in cameras
-            console.log cameras.length
-            console.log "shooting with" + camera.name
             img = camera.shot casper, selector, @name
             shots[camera.name] = img
         step_output.add_screenshot screenshot
@@ -264,7 +261,8 @@ class Tutorial
         steps_data = []
         casper.start @config.url, =>
             casper.viewport @config.width, @config.height
-            for step_id, step of @steps
+            for step_id in [0 ... @steps.length ]
+                step = @steps[step_id]
                 step_output = new StepOuput(step_id)
                 writer.append_step step_output
                 do (step, step_id,step_output) ->
@@ -276,8 +274,8 @@ class Tutorial
                         step_output.markdown = step.text
                     for operation in step.operations
                         operation.setup casper, step_output
-                casper.then ->
-                    writer.append_step JSON.parse(JSON.stringify(step_output))
+                #casper.then ->
+                #    writer.append_step JSON.parse(JSON.stringify(step_output))
             casper.then ->
                 writer.write()
         casper.run()
