@@ -26,35 +26,23 @@ casper.on 'remote.message', (msg)->
     casper.log '[ console ]' +  msg, 'info'
 
 
+
 class Camera
 
-    constructor: (@output, @suffix)->
+    constructor: (@name, @output, @suffix)->
         @margin = 100
         @min_diameter = 200
-        @viewport_width = 1100 # TODO get rid of harcoded values
+        @viewport_width = 1100
         @viewport_height = 3000
 
     adjust_frame: (box)-> 
-        x = box.left + box.width / 2.0
-        y = box.top + box.height / 2.0
-        diameter = Math.max(box.width, box.height) + @margin
-        diameter = Math.max(diameter, @min_diameter)
-        diameter = Math.min(diameter, @viewport_width, @viewport_height)
-        left = Math.max(x - diameter/2.0, 0.0)
-        top = Math.max(y - diameter/2.0, 0.0)
-        left = Math.min(left, @viewport_width - diameter)
-        top = Math.min(top, @viewport_height - diameter)
-        left: left
-        top: top
-        width: diameter
-        height: diameter
+        throw "NOT IMPLEMENTED"
 
     shot_filepath: (name)->
         relpath = "img/" + name + @suffix + ".png"
         filepath = @output + "/" + relpath
         relpath: relpath
         filepath: filepath          
-
 
     get_box = (selector)->
         $el = $(selector)
@@ -72,7 +60,40 @@ class Camera
         img_metas.frame = frame
         img_metas
 
-camera = null
+
+class FullCamera extends Camera
+
+    adjust_frame: (box)-> 
+        # y = box.top + box.height / 2.0
+        # if y < 600
+        #     y = 0
+        # else
+        #     y = Math.max (y - 500), box.top
+        #     y = Math.min (@viewport_height - 1000), y
+        left: 0
+        top: 0
+        width: @viewport_width
+        height: 1000
+
+class ZoomCamera extends Camera
+
+    adjust_frame: (box)-> 
+        x = box.left + box.width / 2.0
+        y = box.top + box.height / 2.0
+        diameter = Math.max(box.width, box.height) + @margin
+        diameter = Math.max(diameter, @min_diameter)
+        diameter = Math.min(diameter, @viewport_width, @viewport_height)
+        left = Math.max(x - diameter/2.0, 0.0)
+        top = Math.max(y - diameter/2.0, 0.0)
+        left = Math.min(left, @viewport_width - diameter)
+        top = Math.min(top, @viewport_height - diameter)
+        left: left
+        top: top
+        width: diameter
+        height: diameter
+
+cameras = []
+
 
 class Operation
 
@@ -81,9 +102,9 @@ class Operation
     run: (casper)->
         throw "Not implemented"
 
-    setup: (casper, writer)->
+    setup: (casper, step_output)->
         casper.then =>
-            @run casper, writer
+            @run casper, step_output
 
 class CheckOperation extends Operation
 
@@ -139,7 +160,18 @@ class ClickOperation extends Operation
                 timeout: timeout
             selector = @options.selector
             @subops.push new ActionOperation @name+"_action", ->
-                @click selector
+                dummy_class = "handrail-" + (Math.random()  * 1000 | 0)
+                add_class = (dummy_class, selector) ->
+                    $el = $(selector)
+                    $el.addClass dummy_class
+                    JSON.stringify $el.length
+                remove_class = (dummy_class) ->
+                    $("." + dummy_class).removeClass dummy_class
+                @evaluate(add_class, dummy_class, selector)
+                if options.mousemove
+                    @mouse.move("." + dummy_class)
+                @click("." + dummy_class)
+                @evaluate remove_class,  dummy_class
         else if @options.label?
             tag = @options.tag
             label = @options.label
@@ -151,16 +183,14 @@ class ClickOperation extends Operation
                     @clickLabel label, tag
                 else
                     @clickLabel label
-
         else
             throw "Cannot build click operation with " + JSON.stringify @options
-
-    setup: (casper, writer)->
+    setup: (casper, step_output)->
         for op in @subops
             do (op)->
                 casper.then ->
                     casper.log "  OPERATION : " + op.name, 'info'
-                    op.run casper, writer
+                    op.run casper, step_output
 
 
 class DebugOperation extends Operation
@@ -170,10 +200,17 @@ class DebugOperation extends Operation
 
 class ScreenshotOperation extends Operation
     
-    run: (casper, writer)->
+    run: (casper, step_output)->
         selector = @options.selector
-        img = camera.shot casper, selector, @name
-        writer.append "<img class='circle' src='#{ img.relpath }'>"
+        #writer.append "<img class='circle' src='#{ img.relpath }'>"
+        shots = {}
+        screenshot = { "name": @name, "shots": shots }
+        for camera in cameras
+            console.log cameras.length
+            console.log "shooting with" + camera.name
+            img = camera.shot casper, selector, @name
+            shots[camera.name] = img
+        step_output.add_screenshot screenshot
 
 operation_from_label = (opname)->
     for opprefix,opclass of OPERATION_MAP
@@ -190,18 +227,28 @@ class Step
         casper.log "Adding operation : " + operation.name, "info"
         @operations.push operation
 
+
+class StepOuput
+
+    constructor: (@id)->
+        @screenshots = []
+        @markdown = ""
+
+    add_screenshot: (screenshot)->
+        @screenshots.push screenshot
+
 class Writer
 
     constructor: (@output)->
-        @filepath = @output + "/index.md"
-        @data = []
+        @filepath = @output + "/index.json"
+        @steps = []
 
-    append: (part)->
-        @data.push part
+    append_step: (step)->
+        @steps.push step
 
     write: ->
         if @filepath?
-            fs.write @filepath, @data.join('\n'), 'w'
+            fs.write @filepath, JSON.stringify(this), 'w'
 
 
 class Tutorial
@@ -210,22 +257,27 @@ class Tutorial
 
     start: ->
         writer = new Writer @config.output
-        camera = new Camera @config.output, "-circle"
+        cameras = [
+            new ZoomCamera("circle", @config.output, "-circle"),
+            new FullCamera("full",   @config.output, "-full")
+        ]
         steps_data = []
         casper.start @config.url, =>
             casper.viewport @config.width, @config.height
             for step_id, step of @steps
-                do (step, step_id) ->
+                step_output = new StepOuput(step_id)
+                writer.append_step step_output
+                do (step, step_id,step_output) ->
                     casper.then ->
                         console.log "------------"
                         casper.log "Step " + step_id, 'info'
                         console.log "------------"
                         console.log step.text
-                        writer.append step.text.trim()
-                for operation in step.operations
-                    operation.setup casper, writer
+                        step_output.markdown = step.text
+                    for operation in step.operations
+                        operation.setup casper, step_output
                 casper.then ->
-                    writer.append "\n"
+                    writer.append_step JSON.parse(JSON.stringify(step_output))
             casper.then ->
                 writer.write()
         casper.run()
@@ -241,6 +293,7 @@ class Tutorial
         operation_appender = (name, optype)->
             window[name] = (params) ->
                 op_name = params.name
+                console.log op_name
                 if not op_name? or op_name.length==0
                     op_name = name + "_" + (steps.length + 1) + "_" + (new_step.operations.length + 1)
                 new_step.add_operation (new optype op_name, params)
