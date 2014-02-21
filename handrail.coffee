@@ -1,11 +1,10 @@
 #!/usr/bin/env casperjs
 
-brocco = require '/home/pmasurel/git/handrailJS/vendor/brocco'
 fs = require 'fs'
-cs = require('/home/pmasurel/git/handrailJS/vendor/coffee-script.js').CoffeeScript
+brocco = require fs.workingDirectory+'/vendor/brocco.js'
+cs = require(fs.workingDirectory+'/vendor/coffee-script.js').CoffeeScript
 
 CASPER_CONFIG = 
-    #clientScripts:  [ 'vendor/jquery-1.11.0.min.js' ]
     logLevel: "info"
     verbose: true    
 casper = require('casper').create CASPER_CONFIG
